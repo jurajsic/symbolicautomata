@@ -102,6 +102,7 @@ public class BoolAfaChecking {
         case OR: return StreamSupport.stream(new CapSpliterator(qterm.getOr()), false)
             .map(x -> exprs[x])
             .reduce((a, b) -> factory.MkOr(a, b)).get();
+        case LIT_TRUE: return factory.True();
         case _NOT_IN_SCHEMA:
             System.err.println("not in schema");
         }
@@ -126,6 +127,8 @@ public class BoolAfaChecking {
             .map(x -> others[x])
             .collect(Collectors.toList())
         );
+        case LIT_FALSE: return algebra.False();
+        case LIT_TRUE: return algebra.True();
         case _NOT_IN_SCHEMA:
             System.err.println("not in schema");
         }
@@ -139,7 +142,8 @@ public class BoolAfaChecking {
     ) {
         switch (aterm.which()) {
         case PREDICATE: return solver.factory.ithVar(aterm.getPredicate());
-        case NOT: return solver.MkNot(bdds[aterm.getNot()]);
+        case NOT:
+            return solver.MkNot(bdds[aterm.getNot()]);
         case AND: return solver.MkAnd(
             StreamSupport.stream(new CapSpliterator(aterm.getAnd()), false)
             .map(x -> bdds[x])
@@ -150,6 +154,8 @@ public class BoolAfaChecking {
             .map(x -> bdds[x])
             .collect(Collectors.toList())
         );
+        case LIT_FALSE: return solver.factory.zero();
+        case LIT_TRUE: return solver.factory.one();
         case _NOT_IN_SCHEMA:
             System.err.println("not in schema");
         }
@@ -197,7 +203,8 @@ public class BoolAfaChecking {
         } catch(Exception e) {
             e.printStackTrace();
             System.err.println(e);
-            System.err.println("Other exception.");
+            System.err.println("Other exception....");
+            throw e;
         }
     }
 
@@ -222,7 +229,7 @@ public class BoolAfaChecking {
         Collection<Integer> finalStates = new ArrayList<Integer>();
 
         PositiveBooleanExpressionFactory positive_factory =
-            new PositiveBooleanExpressionFactorySimple();
+            new PositiveBooleanExpressionFactory();
 
         PositiveBooleanExpression sq_exprs[] =
             new PositiveBooleanExpression[qterms.size()];
