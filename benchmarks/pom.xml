@@ -84,7 +84,7 @@
       <dependency>
           <groupId>org.capnproto</groupId>
           <artifactId>runtime</artifactId>
-          <version>0.1.6-SNAPSHOT</version>
+          <version>0.1.12-SNAPSHOT</version>
       </dependency>
       <dependency>
           <groupId>org.apache.commons</groupId>

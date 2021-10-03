@@ -1,9 +1,9 @@
 #include <jni.h>
 #include <iostream>
 
-#include <automata-safa-capnp/Model/Separated.capnp.h>
-#include <automata-safa-capnp/Rpc/ModelChecker.capnp.h>
-#include <automata-safa-capnp/Rpc/ModelCheckers.capnp.h>
+#include <automata-safa-capnp/Afa/Model/Separated.capnp.h>
+#include <automata-safa-capnp/Afa/Rpc/ModelChecker.capnp.h>
+#include <automata-safa-capnp/Afa/Rpc/ModelCheckers.capnp.h>
 #include <capnp/ez-rpc.h>
 #include <capnp/pointer-helpers.h>
 #include <capnp/arena.h>
