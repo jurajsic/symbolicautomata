@@ -15,6 +15,7 @@ import org.capnproto.ListList;
 import org.capnproto.ReaderArena;
 import org.capnproto.ReaderOptions;
 import org.capnproto.SegmentReader;
+import org.capnproto.AnyPointer;
 
 import automata.safa.BooleanExpressionFactory;
 import automata.safa.SAFA;
@@ -27,12 +28,16 @@ import automata.safa.booleanexpression.PositiveBooleanExpressionFactorySimple;
 import automata.safa.booleanexpression.PositiveId;
 import automata.safa.BooleanExpression;
 import theory.BooleanAlgebra;
+import org.automata.safa.capnp.Lib.Wrapper;
 import org.automata.safa.capnp.Afa.Model.Separated;
+import org.automata.safa.capnp.Afa.Model.Separated.TwoBoolAfas;
 import org.automata.safa.capnp.Afa.Model.Separated.Conjunct11;
+import org.automata.safa.capnp.Afa.Model.Separated.SimpleConjunct11;
 import org.automata.safa.capnp.Afa.Model.Separated.Maybe1;
 import org.automata.safa.capnp.Afa.Model.Term;
 import theory.bdd.BDD;
 import theory.bddalgebra.BDDSolver;
+import theory.sat.SATBooleanAlgebra;
 import theory.sat.SATBooleanAlgebraSimple;
 
 import utilities.Timers;
@@ -190,13 +195,21 @@ public class BoolAfaChecking {
             ReaderArena arena = new ReaderArena(segments, options.traversalLimitInWords);
 
             SegmentReader segment = arena.tryGetSegment(segment_ix);
-            Separated.BoolAfa.Reader sepafa = Separated.BoolAfa.factory.constructReader(
+            TwoBoolAfas.Reader afas = TwoBoolAfas.factory.constructReader(
                 segment, data_pos*8, pointer_pos, data_size_bits, pointer_count,
                 options.nestingLimit
             );
+            // AnyPointer.Reader anyptr = afas.getData();
+            // StructList.Reader<Wrapper.Reader> list = anyptr.getAs(StructList.newFactory(Wrapper.factory));
+
 
             try {
-                solver = load(sepafa);
+                if (GET_SYMBOLS_USING_BDDS) {
+                    solver = loadTwoBdd(afas);
+                } else {
+                    System.err.println("SAT symbols unsupported");
+                    // solver = loadTwoSat(afas);
+                }
             } catch (TimeoutException e) {
                 System.err.println("Timeout loading AFA, this should not happen.");
             }
@@ -217,7 +230,122 @@ public class BoolAfaChecking {
     public int getStatus() { return solver.getStatus(); }
     public int getTime() { return solver.getTime(); }
 
-    public static ModelChecking load(Separated.BoolAfa.Reader sepafa) throws TimeoutException {
+    public static ModelChecking loadTwoBdd(Separated.TwoBoolAfas.Reader sepafa) throws TimeoutException {
+      // Separated.TwoBoolAfas.Reader sepafa = afaWrapper.getData().getAs(Separated.TwoBoolAfas.factory);
+      StructList.Reader<Term.QTerm11.Reader> qterms = sepafa.getQterms();
+      StructList.Reader<Term.BoolTerm11.Reader> aterms = sepafa.getAterms();
+      ListList.Reader<StructList.Reader<SimpleConjunct11.Reader>> qdefs = sepafa.getStates();
+      int state_count = qdefs.size();
+
+      PositiveBooleanExpressionFactory positive_factory = new PositiveBooleanExpressionFactory();
+      PositiveBooleanExpression sq_exprs[] = new PositiveBooleanExpression[qterms.size()];
+
+      int i = 0;
+      for (Term.QTerm11.Reader qterm: qterms) {
+          sq_exprs[i] = fromQTerm(qterm, sq_exprs, positive_factory);
+          i++;
+      }
+
+      BDDSolver algebra = new BDDSolver(sepafa.getVarCount());
+      BDD sa_bdds[] = new BDD[aterms.size()];
+      i = 0;
+      for (Term.BoolTerm11.Reader aterm: aterms) {
+          sa_bdds[i] = bdd(aterm, sa_bdds, algebra);
+          i++;
+      }
+
+      Collection<SAFAInputMove<BDD, BDD>> transitions = new ArrayList<>();
+      i = 0;
+      for (int j = 0; j < state_count; j++) {
+          StructList.Reader<SimpleConjunct11.Reader> qdef = qdefs.get(j);
+          for (SimpleConjunct11.Reader qdefpart: qdef) {
+              transitions.add(new SAFAInputMove<BDD, BDD>(
+                  i,
+                  sq_exprs[qdefpart.getQterm()],
+                  sa_bdds[qdefpart.getAterm()]
+              ));
+          }
+          i++;
+      }
+
+      PositiveBooleanExpression initialFormula1 = sq_exprs[sepafa.getInitialFormula1()];
+      PositiveBooleanExpression initialFormula2 = sq_exprs[sepafa.getInitialFormula2()];
+      Collection<Integer> finalStates1 = new ArrayList<Integer>();
+      Collection<Integer> finalStates2 = new ArrayList<Integer>();
+      org.capnproto.PrimitiveList.Int.Reader finalStates1R = sepafa.getFinalStates1();
+      org.capnproto.PrimitiveList.Int.Reader finalStates2R = sepafa.getFinalStates2();
+      int qfsize = finalStates1R.size();
+      for (int j = 0; j < qfsize; j++) {
+        finalStates1.add(finalStates1R.get(j));
+      }
+      qfsize = finalStates2R.size();
+      for (int j = 0; j < qfsize; j++) {
+        finalStates2.add(finalStates2R.get(j));
+      }
+
+      SAFA<BDD, BDD> safa1 = SAFA.MkSAFA(
+          transitions, initialFormula1, finalStates1, algebra, true, true, true
+      );
+      SAFA<BDD, BDD> safa2 = SAFA.MkSAFA(
+          transitions, initialFormula2, finalStates2, algebra, true, true, true
+      );
+
+      if (GET_SUCCESSORS_USING_BDDS) {
+        BooleanExpressionFactory<BDDExpression> succ_factory = new BDDExpressionFactory(state_count + 1);
+        return new ModelChecker<>(safa1, safa2, algebra, succ_factory);
+      }
+      else {
+        return new ModelChecker<>(safa1, safa2, algebra, SAFA.getBooleanExpressionFactory());
+      }
+    }
+
+    // public static SAFA<Integer, boolean[]> loadOneSat(Wrapper.Reader afaWrapper) throws TimeoutException {
+    //   Separated.BoolAfa2.Reader sepafa = afaWrapper.getData().getAs(Separated.BoolAfa2.factory);
+    //   StructList.Reader<Term.QTerm11.Reader> qterms = sepafa.getQterms();
+    //   StructList.Reader<Term.BoolTerm11.Reader> aterms = sepafa.getAterms();
+    //   ListList.Reader<StructList.Reader<SimpleConjunct11.Reader>> qdefs = sepafa.getStates();
+    //   int state_count = qdefs.size();
+
+    //   PositiveBooleanExpressionFactory positive_factory = new PositiveBooleanExpressionFactory();
+    //   PositiveBooleanExpression sq_exprs[] = new PositiveBooleanExpression[qterms.size()];
+
+    //   int i = 0;
+    //   for (Term.QTerm11.Reader qterm: qterms) {
+    //       sq_exprs[i] = fromQTerm(qterm, sq_exprs, positive_factory);
+    //       i++;
+    //   }
+
+    //   PositiveBooleanExpression initialState = sq_exprs[sepafa.getInitialFormula()];
+    //   Collection<Integer> finalStates = new ArrayList<Integer>();
+
+    //   SATBooleanAlgebra algebra = new SATBooleanAlgebra(sepafa.getVarCount());
+    //   Integer sa_sat_formulas[] = new Integer[aterms.size()];
+    //   i = 0;
+    //   for (Term.BoolTerm11.Reader aterm: aterms) {
+    //       sa_sat_formulas[i] = sat_formula(aterm, sa_sat_formulas, algebra);
+    //       i++;
+    //   }
+
+    //   Collection<SAFAInputMove<Integer, boolean[]>> transitions = new ArrayList<SAFAInputMove<Integer, boolean[]>>();
+    //   i = 0;
+    //   for (int j = 0; j < state_count; j++) {
+    //       StructList.Reader<SimpleConjunct11.Reader> qdef = state.getTransitions();
+    //       for (SimpleConjunct11.Reader qdefpart: qdef) {
+    //           transitions.add(new SAFAInputMove<Integer, boolean[]>(
+    //               i,
+    //               sq_exprs[qdefpart.getQterm()],
+    //               sa_sat_formulas[qdefpart.getAterm()]
+    //           ));
+    //       }
+    //       i++;
+    //   }
+
+    //   return SAFA.MkSAFA(
+    //       transitions, initialState, finalStates, algebra, false, false, false
+    //   );
+    // }
+
+    public static ModelChecking loadEmptiness(Separated.BoolAfa.Reader sepafa) throws TimeoutException {
         int i;
         StructList.Reader<Term.QTerm11.Reader> qterms = sepafa.getQterms();
         StructList.Reader<Term.BoolTerm11.Reader> aterms = sepafa.getAterms();
@@ -341,19 +469,32 @@ interface ModelChecking {
 }
 
 class ModelChecker<P, S, E extends BooleanExpression> implements ModelChecking {
-    SAFA<P, S> aut, empty;
+    SAFA<P, S> aut1, aut2;
     BooleanAlgebra<P, S> algebra;
     BooleanExpressionFactory<E> boolexpr;
 
     SAFA.ControlHandler control;
 
     public ModelChecker(
-        SAFA<P, S> aut,
+        SAFA<P, S> aut1,
+        SAFA<P, S> aut2,
         BooleanAlgebra<P, S> algebra,
         BooleanExpressionFactory<E> boolexpr
     ) {
-        this.aut = aut;
-        this.empty = SAFA.getEmptySAFA(algebra);
+        this.aut1 = aut1;
+        this.aut2 = aut2;
+        this.algebra = algebra;
+        this.boolexpr = boolexpr;
+        this.control = new SAFA.ControlHandler();
+    }
+
+    public ModelChecker(
+        SAFA<P, S> aut1,
+        BooleanAlgebra<P, S> algebra,
+        BooleanExpressionFactory<E> boolexpr
+    ) {
+        this.aut1 = aut1;
+        this.aut2 = SAFA.getEmptySAFA(algebra);
         this.algebra = algebra;
         this.boolexpr = boolexpr;
         this.control = new SAFA.ControlHandler();
@@ -364,7 +505,7 @@ class ModelChecker<P, S, E extends BooleanExpression> implements ModelChecking {
         control.status.set(SAFA.ControlHandler.RUNNING);
         try {
             boolean is_empty = SAFA.isEquivalent(
-                aut, empty, algebra, boolexpr, control).getFirst();
+                aut1, aut2, algebra, boolexpr, control).getFirst();
             return is_empty ? 0 : 1;
         }
         catch(TimeoutException e) {
