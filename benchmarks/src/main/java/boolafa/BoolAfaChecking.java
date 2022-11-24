@@ -343,10 +343,10 @@ public class BoolAfaChecking {
       }
 
       SAFA<BDD, BDD> safa1 = SAFA.MkSAFA(
-          transitions, initialFormula1, finalStates1, algebra, true, true, true
+          transitions, initialFormula1, finalStates1, algebra, true, false, true
       );
       SAFA<BDD, BDD> safa2 = SAFA.MkSAFA(
-          transitions, initialFormula2, finalStates2, algebra, true, true, true
+          transitions, initialFormula2, finalStates2, algebra, true, false, true
       );
 
       if (GET_SUCCESSORS_USING_BDDS) {
