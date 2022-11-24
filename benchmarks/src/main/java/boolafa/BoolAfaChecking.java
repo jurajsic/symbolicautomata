@@ -1,5 +1,8 @@
 package boolafa;
 
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -9,13 +12,8 @@ import java.util.stream.StreamSupport;
 import java.util.Spliterator;
 import java.util.function.Consumer;
 
+import org.capnproto.*;
 import org.sat4j.specs.TimeoutException;
-import org.capnproto.StructList;
-import org.capnproto.ListList;
-import org.capnproto.ReaderArena;
-import org.capnproto.ReaderOptions;
-import org.capnproto.SegmentReader;
-import org.capnproto.AnyPointer;
 
 import automata.safa.BooleanExpressionFactory;
 import automata.safa.SAFA;
@@ -28,13 +26,14 @@ import automata.safa.booleanexpression.PositiveBooleanExpressionFactorySimple;
 import automata.safa.booleanexpression.PositiveId;
 import automata.safa.BooleanExpression;
 import theory.BooleanAlgebra;
-import org.automata.safa.capnp.Lib.Wrapper;
-import org.automata.safa.capnp.Afa.Model.Separated;
-import org.automata.safa.capnp.Afa.Model.Separated.TwoBoolAfas;
-import org.automata.safa.capnp.Afa.Model.Separated.Conjunct11;
-import org.automata.safa.capnp.Afa.Model.Separated.SimpleConjunct11;
-import org.automata.safa.capnp.Afa.Model.Separated.Maybe1;
-import org.automata.safa.capnp.Afa.Model.Term;
+
+import org.automata.capnp.Afa.Model.Separated;
+import org.automata.capnp.Afa.Model.Separated.TwoBoolAfas;
+import org.automata.capnp.Afa.Model.Separated.Conjunct11;
+import org.automata.capnp.Afa.Model.Separated.SimpleConjunct11;
+import org.automata.capnp.Afa.Model.Separated.Maybe1;
+import org.automata.capnp.Afa.Model.Term;
+
 import theory.bdd.BDD;
 import theory.bddalgebra.BDDSolver;
 import theory.sat.SATBooleanAlgebra;
@@ -167,16 +166,76 @@ public class BoolAfaChecking {
         return solver.factory.one();
     }
 
-    static {
-        System.loadLibrary("boolafaRpc");
-    }
+//    static {
+//        System.loadLibrary("boolafaRpc");
+//    }
 
     public static void main(String[] args) {
-        System.out.println("Listening on " + RPC_PORT);
-        BoolAfaChecking.runRpcServer(RPC_PORT);
+        if (args.length != 1) {
+            System.err.println("ERROR: Expects one input .bisim file as argument");
+            org.capnproto.MessageBuilder message = new MessageBuilder();
+            TwoBoolAfas.Builder a = message.initRoot(TwoBoolAfas.factory);
+            a.setInitialFormula1(0);
+            a.setInitialFormula2(5);
+            a.setVarCount(2);
+            StructList.Builder<Term.QTerm11.Builder> qterms = a.initQterms(2);
+            qterms.get(0).setState(5);
+            PrimitiveList.Int.Builder and = qterms.get(1).initAnd(2);
+            and.set(0,1);
+            and.set(1,5);
+            a.initAterms(1).get(0).setPredicate(5);
+
+            StructList.Builder<SimpleConjunct11.Builder> state = a.initStates(1).get(0);
+            state.get(0).setAterm(5);
+            state.get(0).setQterm(1);
+            state.get(1).setAterm(2);
+            state.get(1).setQterm(3);
+            a.initFinalStates1(1).set(0,5);
+            a.initFinalStates2(1).set(0,4);
+            try {
+                Serialize.write((new java.io.FileOutputStream("a.bisim")).getChannel(), message);
+            } catch (FileNotFoundException e) {
+                throw new RuntimeException(e);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+            return;
+        }
+        try {
+            org.capnproto.MessageReader message = org.capnproto.Serialize.read((new java.io.FileInputStream(args[0])).getChannel());
+            Separated.TwoBoolAfas.Reader afas = message.getRoot(Separated.TwoBoolAfas.factory);
+            System.out.println(afas.hasFinalStates1());
+            System.out.println(afas.getInitialFormula1());
+            System.out.println(afas.getInitialFormula2());
+            System.out.println(afas.getVarCount());
+            System.out.println(afas.getQterms());
+
+            if (GET_SYMBOLS_USING_BDDS) {
+                ModelChecking solverMain = loadTwoBdd(afas);
+                int result = solverMain.solve();
+                if (result == 0) {
+                    System.out.println("EMPTY");
+                } else if (result == 0) {
+                    System.out.print("NOT EMPTY");
+                } else {
+                    System.err.println("ERROR: Some error while solving");
+                }
+            } else {
+                System.err.println("SAT symbols unsupported");
+                // solver = loadTwoSat(afas);
+            }
+        } catch (TimeoutException e) {
+            System.err.println("ERROR: Timeout loading AFA, this should not happen.");
+        } catch (java.io.FileNotFoundException e) {
+            System.err.println("ERROR: Given input file does not exists.");
+        } catch (java.io.IOException e) {
+            System.err.println("ERROR: Some problem while reading file");
+        }
+
+//        BoolAfaChecking.runRpcServer(RPC_PORT);
     }
 
-    private static native void runRpcServer(int port);
+//    private static native void runRpcServer(int port);
 
     public BoolAfaChecking(
         ByteBuffer[] segments,

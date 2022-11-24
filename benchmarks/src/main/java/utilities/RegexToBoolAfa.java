@@ -20,9 +20,9 @@ import org.capnproto.PrimitiveList;
 import org.capnproto.StructList;
 import org.capnproto.ListList;
 
-import org.automata.safa.capnp.Afa.Model.Separated.Range16Nfa;
-import org.automata.safa.capnp.Afa.Model.Separated.ConjunctR16Q;
-import org.automata.safa.capnp.Afa.Model.Separated.Range16;
+import org.automata.capnp.Afa.Model.Separated.Range16Nfa;
+import org.automata.capnp.Afa.Model.Separated.ConjunctR16Q;
+import org.automata.capnp.Afa.Model.Separated.Range16;
 
 import com.google.common.collect.ImmutableList;
 import org.apache.commons.lang3.tuple.ImmutablePair;
