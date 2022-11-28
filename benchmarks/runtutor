@@ -1,2 +1,2 @@
-LD_LIBRARY_PATH=$PWD/build:$HOME/.local/lib mvn exec:java -Dexec.mainClass=utilities.RegexToBoolAfa
+java -jar target/regex-to-afa.jar
 
